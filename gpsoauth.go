@@ -13,7 +13,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 var httpClient = http.DefaultClient
@@ -72,12 +75,12 @@ func signature(email, password string) (string, error) {
 
 // Login fetches a token and gets an OAuth string for an email address and
 // password for the given services.
-func Login(email, password, androidID, app, clientSignature string, service ...string) (auth string, err error) {
-	token, err := GetToken(email, password, androidID)
+func Login(email, password, androidID, app, clientSignature string, service ...string) (accessToken *Token, err error) {
+	refreshToken, err := GetToken(email, password, androidID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return OAuth(email, token, androidID, app, clientSignature, service...)
+	return AccessTokenFromRefreshToken(email, refreshToken, androidID, app, clientSignature, service...), nil
 }
 
 func defaultValues(email, androidID string) url.Values {
@@ -129,9 +132,12 @@ func GetToken(email, password, androidID string) (token string, err error) {
 	return "", fmt.Errorf("gpsoauth: no Token found")
 }
 
-// OAuth fetches an OAuth string for an email address and token for the
-// given services.
-func OAuth(email, token, androidID string, app string, clientSignature string, service ...string) (auth string, err error) {
+type accessToken struct {
+	token  string
+	expiry time.Time
+}
+
+func getAccessToken(email, token, androidID string, app string, clientSignature string, service ...string) (*accessToken, error) {
 	data := defaultValues(email, androidID)
 	data.Set("app", app)
 	data.Set("check_email", "1")
@@ -145,26 +151,44 @@ func OAuth(email, token, androidID string, app string, clientSignature string, s
 
 	resp, err := httpClient.PostForm(authURL, data)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	b, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("gpsoauth: %s: %s", resp.Status, b)
+		return nil, fmt.Errorf("gpsoauth: %s: %s", resp.Status, b)
 	}
+
+	var t accessToken
+
 	for _, line := range strings.Split(string(b), "\n") {
 		sp := strings.SplitN(line, "=", 2)
 		if len(sp) != 2 {
 			continue
 		}
 		if sp[0] == "Auth" {
-			return sp[1], nil
+			t.token = sp[1]
+		}
+		if sp[0] == "Expiry" {
+			unixtime, err := strconv.ParseInt(sp[1], 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			// ensure we don't use token close to expiry
+			unixtime -= 60
+			t.expiry = time.Unix(unixtime, 0)
 		}
 	}
-	return "", fmt.Errorf("gpsoauth: no Auth found")
+	if t.token == "" {
+		return nil, fmt.Errorf("gpsoauth: no Auth found")
+	}
+	if t.expiry.IsZero() {
+		return nil, fmt.Errorf("gpsoauth: no expiry time detected")
+	}
+	return &t, nil
 }
 
 // GetNode returns the MAC address of an interface on the machine is a
@@ -186,4 +210,34 @@ func GetNode() string {
 		_, _ = rand.Read(addr)
 	}
 	return hex.EncodeToString(addr[:6])
+}
+
+type Token struct {
+	refreshToken string
+	refresh      func() (*accessToken, error)
+
+	mtx         sync.Mutex
+	accessToken *accessToken
+}
+
+func AccessTokenFromRefreshToken(email, refreshToken, androidID string, app string, clientSignature string, service ...string) *Token {
+	return &Token{
+		refreshToken: refreshToken,
+		refresh: func() (*accessToken, error) {
+			return getAccessToken(email, refreshToken, androidID, app, clientSignature, service...)
+		},
+	}
+}
+
+func (t *Token) Token() (string, error) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+	if t.accessToken == nil || t.accessToken.expiry.Before(time.Now()) {
+		accessToken, err := t.refresh()
+		if err != nil {
+			return "", err
+		}
+		t.accessToken = accessToken
+	}
+	return t.accessToken.token, nil
 }
