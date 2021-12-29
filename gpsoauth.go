@@ -82,14 +82,13 @@ func Login(email, password, androidID, app, clientSignature string, service ...s
 
 func defaultValues(email, androidID string) url.Values {
 	return url.Values{
-		"androidId":                    []string{androidID},
-		"Email":                        []string{email},
-		"device_country":               []string{"us"},
-		"operatorCountry":              []string{"us"},
-		"lang":                         []string{"en_US"},
-		"google_play_services_version": []string{"17785041"},
-		"sdk_version":                  []string{"28"},
-		"has_permission":               []string{"1"},
+		"androidId":       []string{androidID},
+		"Email":           []string{email},
+		"device_country":  []string{"us"},
+		"operatorCountry": []string{"us"},
+		"lang":            []string{"en_US"},
+		"sdk_version":     []string{"17"},
+		"has_permission":  []string{"1"},
 	}
 }
 
