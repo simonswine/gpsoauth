@@ -72,12 +72,25 @@ func signature(email, password string) (string, error) {
 
 // Login fetches a token and gets an OAuth string for an email address and
 // password for the given services.
-func Login(email, password, androidID string, service ...string) (auth string, err error) {
+func Login(email, password, androidID, app, clientSignature string, service ...string) (auth string, err error) {
 	token, err := GetToken(email, password, androidID)
 	if err != nil {
 		return "", err
 	}
-	return OAuth(email, token, androidID, service...)
+	return OAuth(email, token, androidID, app, clientSignature, service...)
+}
+
+func defaultValues(email, androidID string) url.Values {
+	return url.Values{
+		"androidId":                    []string{androidID},
+		"Email":                        []string{email},
+		"device_country":               []string{"us"},
+		"operatorCountry":              []string{"us"},
+		"lang":                         []string{"en_US"},
+		"google_play_services_version": []string{"17785041"},
+		"sdk_version":                  []string{"28"},
+		"has_permission":               []string{"1"},
+	}
 }
 
 // GetToken fetches a token for an email address and password.
@@ -86,12 +99,13 @@ func GetToken(email, password, androidID string) (token string, err error) {
 	if err != nil {
 		return "", err
 	}
-	data := url.Values{
-		"Email":           []string{email},
-		"add_account":     []string{"1"},
-		"EncryptedPasswd": []string{string(sig)},
-		"androidId":       []string{androidID},
-	}
+	data := defaultValues(email, androidID)
+	data.Set("accountType", "HOSTED_OR_GOOGLE")
+	data.Set("add_account", "1")
+	data.Set("EncryptedPasswd", string(sig))
+	data.Set("service", "ac2dm")
+	data.Set("source", "android")
+
 	resp, err := httpClient.PostForm(authURL, data)
 	if err != nil {
 		return "", err
@@ -118,13 +132,18 @@ func GetToken(email, password, androidID string) (token string, err error) {
 
 // OAuth fetches an OAuth string for an email address and token for the
 // given services.
-func OAuth(email, token, androidID string, service ...string) (auth string, err error) {
-	data := url.Values{
-		"Email":           []string{email},
-		"EncryptedPasswd": []string{token},
-		"service":         service,
-		"androidId":       []string{androidID},
+func OAuth(email, token, androidID string, app string, clientSignature string, service ...string) (auth string, err error) {
+	data := defaultValues(email, androidID)
+	data.Set("app", app)
+	data.Set("check_email", "1")
+	for _, s := range service {
+		data.Add("service", s)
 	}
+	data.Set("client_sig", clientSignature)
+	data.Set("caller", app)
+	data.Set("Token", token)
+	data.Set("callerSig", clientSignature)
+
 	resp, err := httpClient.PostForm(authURL, data)
 	if err != nil {
 		return "", err
