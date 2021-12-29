@@ -16,6 +16,12 @@ import (
 	"strings"
 )
 
+var httpClient = http.DefaultClient
+
+func WithHTTPClient(c *http.Client) {
+	httpClient = c
+}
+
 const (
 	authURL = "https://android.clients.google.com/auth"
 
@@ -86,7 +92,7 @@ func GetToken(email, password, androidID string) (token string, err error) {
 		"EncryptedPasswd": []string{string(sig)},
 		"androidId":       []string{androidID},
 	}
-	resp, err := http.Post(authURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	resp, err := httpClient.PostForm(authURL, data)
 	if err != nil {
 		return "", err
 	}
@@ -119,7 +125,7 @@ func OAuth(email, token, androidID string, service ...string) (auth string, err 
 		"service":         service,
 		"androidId":       []string{androidID},
 	}
-	resp, err := http.Post(authURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	resp, err := httpClient.PostForm(authURL, data)
 	if err != nil {
 		return "", err
 	}
